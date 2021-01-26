@@ -1,0 +1,8 @@
+Inspiration / Source pour le code :
+	_ ( Halo du soleil ) http://stemkoski.github.io/Three.js/Shader-Halo.html
+		- les shaders ont été copiés, la création de l'objet a été adapté à notre cas ( positionement du halo, taille de ce dernier .. )
+	_ ( Dégradé ciel ) https://threejs.org/examples/webgl_lights_hemisphere.html
+		- les shaders ont été copiés pour la gestion du ciel, la création des élements pour générer le ciel ont été adapté à notrecas ( forme, positionement de la boite, taille de la boite, couleur du haut et bas du ciel .. )
+		- les paramètres pour générer les ombre à partir de la lumière dirigé ont été compris à partir de cette source ( dirlight.shadow.camera.left = -d; .. )
+
+Les sources des objets sont dans leurs dossiers respectifs.
