@@ -1,0 +1,5 @@
+https://sketchfab.com/models/b38c8fd9e36a49ef80cc135acc9b0865
+author : https://sketchfab.com/joboto
+
+Les modifcations suivantes ont été effectués :
+	- La partie verte de l'objet a été enlevé

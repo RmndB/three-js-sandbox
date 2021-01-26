@@ -1,0 +1,10 @@
+https://sketchfab.com/models/371dea88d7e04a76af5763f2a36866bc
+author : https://sketchfab.com/tomkranis
+
+Lui même c'est basé sur le model :
+https://opengameart.org/content/fox-and-shiba
+de : https://opengameart.org/users/pixelmannen
+Il y a rajouté les animations
+
+Les modifcations suivantes ont été effectués :
+	- Changement des couleurs de la texture de orange à marron foncé

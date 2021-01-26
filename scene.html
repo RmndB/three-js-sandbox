@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="fr">
+	<head>
+		<title>WEB GL</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				font-family: Monospace;
+				background-color: #000;
+				color: #fff;
+				margin: 0px;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+
+	<body>
+		<!-- JS pour le gui -->
+		<script type="text/javascript" src="js/dat.gui.js"></script>
+		<!-- three.js -->
+		<script src="js/three.js"></script>
+		<!-- OrbitControls pour les contrôles de camera -->
+		<script src="js/OrbitControls.js"></script>
+		<!-- Loader pour les .gltf -->
+		<script src="js/GLTFLoader.js"></script>
+		<!-- Loader pour les .fbx (FBXLoader.js a besoint de inflate.min.js)-->
+		<script src="js/inflate.min.js"></script>
+		<script src="js/FBXLoader.js"></script>
+		<!-- JS pour tester si WebGL est bien compatible -->
+		<script src="js/WebGL.js"></script>
+
+		<!-- Shader pour le ciel ( https://threejs.org/examples/webgl_lights_hemisphere.html ) -->
+		<script type="x-shader/x-vertex" id="vertexShaderSky">
+
+			varying vec3 vWorldPosition;
+
+			void main() {
+
+				vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+				vWorldPosition = worldPosition.xyz;
+
+				gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+			}
+
+		</script>
+		<script type="x-shader/x-fragment" id="fragmentShaderSky">
+
+			uniform vec3 topColor;
+			uniform vec3 bottomColor;
+			uniform float offset;
+			uniform float exponent;
+
+			varying vec3 vWorldPosition;
+
+			void main() {
+
+				float h = normalize( vWorldPosition + offset ).y;
+				gl_FragColor = vec4( mix( bottomColor, topColor, max( pow( max( h , 0.0), exponent ), 0.0 ) ), 1.0 );
+
+			}
+
+		</script>
+
+		<!-- Shader pour l'halo du soleil ( http://stemkoski.github.io/Three.js/Shader-Halo.html ) -->
+		<script id="vertexShaderGlow" type="x-shader/x-vertex">
+			varying vec3 vNormal;
+			void main() 
+			{
+			    vNormal = normalize( normalMatrix * normal );
+			    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+			}
+		</script>
+		<script id="fragmentShaderGlow" type="x-shader/x-vertex"> 
+			varying vec3 vNormal;
+			void main() 
+			{
+				float intensity = pow( 0.7 - dot( vNormal, vec3( 0.0, 0.0, 1.0 ) ), 4.0 ); 
+			    gl_FragColor = vec4( 1.0, 1.0, 1.0, 1.0 ) * intensity;
+			}
+		</script>
+
+		<script>
+
+			//Test pour s'assurer de la comptabilité de WebGL
+			if ( WEBGL.isWebGLAvailable() === false ) {
+				document.body.appendChild( WEBGL.getWebGLErrorMessage() );
+			}
+
+			//Variables essentielles utilisées dans les fonctions de rendu et d'animation
+			var camera, scene, renderer, controls;
+			//Tableau pour l'animation du renard ( cf fonction animate )
+			var mixers = [];
+			//Variable pour limiter une partie de l'animation du renard ( cf fonction animate )
+			var fCount=0;
+			//Variables pour gérer la taille du rendu en fonction de la taille de la fenetre
+			var windowHalfX = window.innerWidth / 2;
+			var windowHalfY = window.innerHeight / 2;
+			//Boolean, si on veut des nuages générés aléatoirement il vaut 1 sinon 0
+			var cloud = 1;
+			//Declaration de l'oiseau en amont afin qu'il puisses être déplacé dans la fonction d'animation
+			var bird;
+			//Objet utilisé par le gui pour changer la vitesse de l'oiseau ou le stoper, ou même bloquer la caméra
+			var move = {
+				//true => L'oiseau bouge SINON non
+				action: true,
+				//vitesse de l'oiseau
+				speed: 2,
+				//true => La caméra regarde toujours vers le centre de la scène SINON non
+				look: true
+			};
+
+			//On initialise la scène et lance les animations
+			init();
+			animate();
+
+			//Fonction pour initialiser la scene
+			function init() {
+
+				//On créer la "div" (HTML) qui va contenir le rendu
+				var container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				//On créer la scène
+				scene = new THREE.Scene();
+
+		    	//Varibale utilisé tout au long du programme qui caractérise la taille du terrain
+				var sizePlane = 1500;
+
+				//On créer la camera avec un FOV de 50 et on forme le frustum
+				camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, sizePlane*3 );
+				//On pose la camera à hauteur de vol d'oiseau et on l'a fait regardé vers le milieu
+		    	camera.position.set(0,750,0);
+		    	camera.lookAt(0,50,0);
+
+				//var axesHelper = new THREE.AxesHelper( sizePlane );
+				//scene.add( axesHelper );
+
+//----FOG----------------------------------------------------------------------------
+
+				//On créer un brouillard de couleur blanc qu'on rajoute à la scene
+				var fogNear = sizePlane/4;//Distance minimal à laquelle le brouillard s'applique en fonction de la taille du terrain
+				var fogFar = sizePlane*3;//Distance maximal à laquelle le brouillard s'applique en fonction de la taille du terrain
+				scene.fog = new THREE.Fog( scene.background, fogNear, fogFar);				
+				
+//----LIGHT----------------------------------------------------------------------------
+				
+
+				//HEMILIGHT
+				//On créer une source de lumière autour de la scene ( lumière hémisphérique )
+				hemiLight = new THREE.HemisphereLight( 0xABA52C, 0xFFFFFF, 0.7 );
+				hemiLight.position.set( 0, 50, 0 );
+				scene.add( hemiLight );
+
+				//hemiLightHelper = new THREE.HemisphereLightHelper( hemiLight, 10 );
+				//scene.add( hemiLightHelper );
+
+				//DIRLIGHT
+				//On créer une source de lumière dirigé plane
+				dirLight = new THREE.DirectionalLight( 0xffffff, 0.7 );
+				dirLight.position.set( 30, 750, -30 );
+				scene.add( dirLight );
+
+				//Gestion de l'ombre insipiré de https://threejs.org/examples/webgl_lights_hemisphere.html
+
+				//On paramètre la gestion de l'ombre pour la lumière dirigée
+				dirLight.castShadow = true;
+				dirLight.shadow.mapSize.width = 2048;
+				dirLight.shadow.mapSize.height = 2048;
+				var d = sizePlane/2;
+				dirLight.shadow.camera.left = - d;
+				dirLight.shadow.camera.right = d;
+				dirLight.shadow.camera.top = d;
+				dirLight.shadow.camera.bottom = - d;
+				dirLight.shadow.camera.far = 3500;
+				dirLight.shadow.bias = - 0.0001;
+
+				//dirLightHeper = new THREE.DirectionalLightHelper( dirLight, 10 );
+				//scene.add( dirLightHeper );	
+
+//----GROUND----------------------------------------------------------------------------
+
+				//On créer une texture pour le sol qu'on répète
+				var texture = new THREE.TextureLoader().load( 'texture/sand.jpg' );
+					texture.wrapS = THREE.RepeatWrapping;
+					texture.wrapT = THREE.RepeatWrapping;
+					texture.repeat.set( sizePlane/40 * 100, sizePlane/40 * 100);
+				//On créer un materiel pour le sol avec la texture
+				var groundMat = new THREE.MeshPhongMaterial( { map: texture, color: 0xF4C578, specular: 0x050505 } );
+
+				//On charge un objet en GLTF avec GLTFLoader
+		      	var loader = new THREE.GLTFLoader();
+				loader.load( 'object/land/scene.gltf', function ( gltf ) {
+				    gltf.scene.traverse( function( child ) {
+				        if ( child instanceof THREE.Mesh ) { 
+				        	//On lui fait recevoir les ombres des autres objets qui vont être définit
+				        	child.castShadow = false; 
+				        	child.receiveShadow = true;
+				        	//On lui attribut le matériau créer précédement
+				        	child.material = groundMat;
+				        }
+				    } );
+					var mesh = gltf.scene;
+					//On le redimensionne
+					var s = 0.25;
+					mesh.scale.set( s, s, s );
+					//On le positionne
+					mesh.position.y = -40;			    		
+					//On le rajoute à la scène
+					scene.add( mesh );
+				} );   
+
+//----SKYDOME----------------------------------------------------------------------------
+				
+				//Insipration pour le ciel : https://threejs.org/examples/webgl_lights_hemisphere.html
+
+				//On récupère le vertexShader et fragmentShader définit dans les scripte au début du programme pour gérer le ciel
+				var vertexShader = document.getElementById( 'vertexShaderSky' ).textContent;
+				var fragmentShader = document.getElementById( 'fragmentShaderSky' ).textContent;
+
+				//On paramètre le ciel
+				var uniforms = {
+					//Notement les couleurs
+					//Couleur en haut du ciel
+					topColor: { value: new THREE.Color( 0x0077ff ) },
+					//Couleur au niveau du sol
+					bottomColor: { value: new THREE.Color( 0xC1C9CA ) },
+					offset: { value: 33 },
+					exponent: { value: 0.6 }
+				};
+				//On créer une boite vide
+				var skyGeo = new THREE.BoxBufferGeometry( sizePlane, sizePlane*2, sizePlane );
+				//On créer un matériau pour la boite grace au shader
+				var skyMat = new THREE.ShaderMaterial( { vertexShader: vertexShader, fragmentShader: fragmentShader, uniforms: uniforms, side: THREE.BackSide } );
+				//le ciel est "l'assemblage" de la boite vide et du matériau définit précedément : on l'a créer et on l'a rajoute à la scène
+				var sky = new THREE.Mesh( skyGeo, skyMat );
+				scene.add( sky );
+
+
+// --------------------------- OBJECT -------------------------------------
+
+				//On cherche à créer un soleil
+				//On créer une sphere
+				var geometry = new THREE.SphereGeometry( 100, 32, 16 );
+				//On charge une texture du soleil
+				var loader = new THREE.TextureLoader();
+				var texture = loader.load("texture/sun.jpg");
+				//On créer un matériau avec la texture
+				var material = new THREE.MeshBasicMaterial( {map: texture}  );
+				var sphere = new THREE.Mesh( geometry, material );
+				//On poistionne et rajoute la sphère en hauteur
+				sphere.position.set(0,1400,0);
+				scene.add( sphere );
+
+				//On cherche à créer un halo pour le soleil ( inspiré de : http://stemkoski.github.io/Three.js/Shader-Halo.html )
+				//On définit un matériau "brillant" qui va nous servir à imiter le halo du soleil
+				var glowMaterial = new THREE.ShaderMaterial( 
+				{
+				    uniforms: {  },
+					vertexShader:   document.getElementById( 'vertexShaderGlow'   ).textContent,
+					fragmentShader: document.getElementById( 'fragmentShaderGlow' ).textContent,
+					side: THREE.BackSide,
+					blending: THREE.AdditiveBlending,
+					transparent: true
+				}   );
+				//On définit la forme du halo comme étant un peu plus grande que celle de notre soleil afin de le faire dépasser
+				var glowGeometry = new THREE.SphereGeometry( 110, 32, 16 );
+				var glow = new THREE.Mesh( glowGeometry, glowMaterial );
+				//On ajoute le halo à la même position que le soleil
+				glow.position.set(0,1400,0);
+				scene.add( glow );
+
+				//On cherche ici à créer un oiseau, l'objectif à therme et de calquer la caméra à la position de l'oiseau en mouvement autour de la scène
+				//BIRD
+				var loader = new THREE.GLTFLoader();
+						loader.load( 'object/bird/scene.gltf', function ( gltf ) {
+						    gltf.scene.traverse( function( child ) {
+						    	//On souhaite seulement avoir l'ombre de l'oiseau puisque l'utilisateur va être à la place de ce dernier
+						    	//C'est pourquoi on créer un matériau transparent que l'on donne à l'oiseau
+						    	child.castShadow = true;						    	
+						    	var transparent = new THREE.MeshBasicMaterial({
+								    transparent: true,
+								    opacity: 0.00000001
+								});
+								child.material = transparent;
+						    } );
+							var mesh = gltf.scene;
+							var s = 50;
+							mesh.scale.set( s, s, s );	
+							mesh.position.set(0,600,0);
+							mesh.rotation.y = 3*Math.PI/2;
+							//La variable bird est utilisé plus tard dans la fonction d'animation
+							bird = mesh;
+							scene.add( mesh );
+						} ); 
+
+				//CROW
+				//On charge un corbeau et on le positionne dans la scène
+				var loader = new THREE.GLTFLoader();
+						loader.load( 'object/crow/scene.gltf', function ( gltf ) {
+						    gltf.scene.traverse( function( child ) {
+						    	child.castShadow = true;
+						    } );					
+							var mesh = gltf.scene;
+							var s = 0.22;
+							mesh.scale.set( s, s, s );	
+							mesh.position.set(356,114,279);
+							mesh.rotation.y = Math.PI*2.7/2;
+							scene.add( mesh );
+						} ); 
+
+				
+				//FOX
+				//On charge un coyotte ( un renard auquel j'ai changé la couleur de ces textures ) et on le positionne dans la scène
+				var loader = new THREE.FBXLoader();
+				loader.load( 'object/fox/animations.fbx', function ( object ) {
+					//On anime le coyotte à l'aide de la variable mixer définit en amont
+					object.mixer = new THREE.AnimationMixer( object );
+					mixers.push( object.mixer );
+					var action = object.mixer.clipAction( object.animations[ 0 ] );
+					action.play();
+					object.traverse( function ( child ) {
+						if ( child.isMesh ) {
+							child.castShadow = true;
+							child.receiveShadow = true;
+							}
+					} );
+					var s = 0.5;
+					object.scale.set( s, s, s );
+					object.position.set(-115,-20,-473);
+					//La variable fox est utilisé plus tard dans la fonction de rendu
+					fox = object;
+					scene.add( object );
+				} );
+
+
+				//CLOUD
+				//On charge sur la scène 5 nuages de manière aléatoire
+				if ( cloud == 1 ) {
+					var nbCloud = 5;
+
+					for ( var i=0; i<nbCloud; i++ ) {
+
+						var loader = new THREE.GLTFLoader();
+						loader.load( 'object/cloud/scene.gltf', function ( gltf ) {
+						    gltf.scene.traverse( function( child ) {
+						    } );					
+							var mesh = gltf.scene;
+							var s = Math.random()*100 + 50;
+							mesh.scale.set( s, s, s );
+							//On encadre leurs positions
+							if ( Math.random() > 0.5 ) {
+								mesh.position.z = Math.random() * sizePlane/2 - sizePlane/10;
+							} else {
+								mesh.position.z = - ( Math.random() * sizePlane/2 ) + sizePlane/10;
+							}
+							if ( Math.random() > 0.5 ) {
+								mesh.position.x = Math.random() * sizePlane/2 - sizePlane/10;
+							} else {
+								mesh.position.x = - ( Math.random() * sizePlane/2 ) + sizePlane/10;
+							}							
+							mesh.position.y = Math.random() * sizePlane/10 + 1000;
+							//On applique une rotation aléatoire également
+							mesh.rotation.y = Math.sin(Math.random() * Math.PI );
+							scene.add( mesh );
+						} ); 
+					}	
+				}
+
+				//DRY BUSH
+				//On charge 8 buissons ( sans les feuilles ), les variables de positions pour chaque buisson ont été définit manuellement puis sont attribués garce à un switch
+				var nbBush = 8;
+				for ( var i=0; i<nbBush; i++ ) {
+
+					var countBush = 0;
+			      	var loader = new THREE.GLTFLoader();
+					loader.load( 'object/bush/scene.gltf', function ( gltf ) {
+					    gltf.scene.traverse( function( child ) {
+					        if ( child instanceof THREE.Mesh ) { 
+				        		child.castShadow = true;
+				        		child.receiveShadow = true;		        	
+					        }
+					    } );		
+					    mesh = gltf.scene;			
+						var s;
+						var x, y, z;
+						switch ( countBush ) {
+							case 0 :
+								x = 360;
+								y = -35;
+								z = 420;
+								s= 20;
+								break;
+							case 1 :
+								x = 340;
+								y = -40;
+								z = 370;
+								s= 23;
+								break;
+							case 2 :
+								x = 400;
+								y = -45;
+								z = 350;
+								s= 25;
+								break;
+							case 3 :
+								x = -345;
+								y = -28;
+								z = -225;
+								s= 20;
+								break;
+							case 4 :
+								x = -464;
+								y = -23;
+								z = 380;
+								s= 22;
+								break;
+							case 5 :
+								x = -434;
+								y = -23;
+								z = 420;
+								s= 22;
+								break;
+							case 6 :
+								x = 30;
+								y = -38;
+								z = -156;
+								s= 25;
+								break;
+							case 7 :
+								x = 545;
+								y = -15;
+								z = -225;
+								s= 20;
+								break;							
+						}
+						mesh.scale.set( s, s, s );
+						countBush++;
+						mesh.position.set( x, y, z );
+						scene.add( mesh );
+					} );   	
+				}	
+
+				//CACTUS 1
+				//On charge 4 cactus, les variables de positions pour chaque cactus ont été définit manuellement puis sont attribués garce à un switch
+				var colorCactus;
+				var nbCac1 = 4;
+				for ( var i=0; i<nbCac1; i++ ) {
+
+					var countCac1 = 0;
+			      	var loader = new THREE.GLTFLoader();
+					loader.load( 'object/cactus/cactus1/scene.gltf', function ( gltf ) {
+					    gltf.scene.traverse( function( child ) {
+					        if ( child instanceof THREE.Mesh ) { 
+				        		child.castShadow = true;
+				        		//On récupère la couleur du cactus
+				        		colorCactus = child.material.color.getHex();
+				        		child.receiveShadow = true;	    
+					        }
+					    } );		
+					    mesh = gltf.scene;			
+						var s = 20.5;
+						mesh.scale.set( s, s, s );
+						var x, y, z;
+						switch ( countCac1 ) {
+							case 0 :
+								x = 200;
+								y = -10;
+								z = -323;
+								break;
+							case 1 :
+								x = 453;
+								y = -5;
+								z = -550;
+								break;
+							case 2 :
+								x = -450;
+								y = -5;
+								z = 56;
+								break;
+							case 3 :
+								x = -545;
+								y = -15;
+								z = -225;
+								break;
+						}
+						countCac1++;
+						mesh.position.set( x, y, z );
+						scene.add( mesh );
+					} );   	
+				}		
+
+				//CACTUS 2
+				//On charge 4 nouveaux cactus, les variables de positions pour chaque cactus ont été définit manuellement puis sont attribués garce à un switch				
+				var nbCac2 = 5;
+				for ( var i=0; i<nbCac2; i++ ) {
+
+					var countCac2 = 0;
+			      	var loader = new THREE.GLTFLoader();
+					loader.load( 'object/cactus/cactus2/scene.gltf', function ( gltf ) {
+					    gltf.scene.traverse( function( child ) {
+					        if ( child instanceof THREE.Mesh ) { 
+				        		child.castShadow = true; 
+				        		//On donne à ces cactus la couleur de ceux qui ont été chargés précédements pour un soucis de cohérence
+				        		child.material.color.setHex( colorCactus );
+				        		child.receiveShadow = true;	        	
+					        }
+					    } );		
+					    mesh = gltf.scene;			
+						var s = 3.5;
+						mesh.scale.set( s, s, s );
+						var x, y, z;
+						switch ( countCac2 ) {
+							case 0 :
+								x = -554;
+								y = -15;
+								z = 420;
+								break;
+							case 1 :
+								x = -153;
+								y = -15;
+								z = 325;
+								break;
+							case 2 :
+								x = 30;
+								y = -25;
+								z = -156;
+								break;
+							case 3 :
+								x = 545;
+								y = -25;
+								z = -225;
+								break;
+							case 4 :
+								x = -150;
+								y = -25;
+								z = -473;
+								break;
+						}
+						countCac2++;
+						mesh.position.set( x, y, z );
+						scene.add( mesh );
+					} );   	
+				}		
+
+				//ROCK
+				//On importe ici les rochers
+				//La scene avec les rochers comportait à l'origine un sol de couleur vert qui n'allait pas du tout avec ma scène. J'ai donc essayé d'éditer l'objet avec le plugin "glTF Tools" de Visual Studio, sans succès. Cependant j'ai par erreur fait buguer la partie verte de la scène avec l'éditeur ce qui a eu pour concéquence de ne plus afficher cette partie indésirable. j'ai donc gardé cet objet bugué qui me convient parfaitement..
+				var loader = new THREE.GLTFLoader();
+				loader.load( 'object/rock/scene.gltf', function ( gltf ) {
+				    gltf.scene.traverse( function( child ) {
+				    	child.castShadow = true; 
+				    	child.receiveShadow = true;
+					    } );		
+					    mesh = gltf.scene;			
+						var s = 10;
+						mesh.scale.set( s, s, s );
+
+						mesh.position.set( 700, 90, 450 );
+						scene.add( mesh );
+				} );   	
+				
+				//On définit et lance le rendu
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.gammaInput = true;
+				renderer.gammaOutput = true;
+				renderer.gammaFactor = 2.2;				
+		        renderer.shadowMap.enabled = true;
+		        //On active les ombres
+      			renderer.shadowMap.type = THREE.PCFSoftShadowMap;   				
+				container.appendChild( renderer.domElement );
+				//On appelle la fonction onWindowResize si on change la taille de la fenetre	
+				window.addEventListener( 'resize', onWindowResize, false );
+				//On définit l'orbit control pour pouvoir bouger la caméra
+				controls = new THREE.OrbitControls( camera , renderer.domElement );;
+
+				//GUI
+				//Grace à dat.gui on définit un menu pour pouvoir changer des paramètres
+				var gui = new dat.GUI();
+				//On définit une première catégorie "bird" qui représente ici le point de vu de l'utilisateur
+				var cam = gui.addFolder('Bird');
+				//On propose de changer la variable move.action de true à false
+				cam.add(move, 'action').listen();	
+				//On propose de changer la variable move.speed de 1 à 4
+				cam.add(move, 'speed', 1,4).listen();
+				//On propose de changer la variable move.look de true à false
+				cam.add(move, 'look').listen();
+				cam.close();
+				//On créer une deuxième catégorie qui fait référence au shader sur le soleil
+				var box = gui.addFolder('Sun ( glow )');
+				//On propose de rendre invisble l'élement brillant du soleil
+				box.add(glow.material, 'visible').listen();				
+				box.close();
+			}
+
+			//Fonction qui mit à jour la taille du frustum de la caméra ainsi que du rendu
+			function onWindowResize() {
+				windowHalfX = window.innerWidth / 2;
+				windowHalfY = window.innerHeight / 2;
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			//Fonction qui fait bouger l'oiseau autour de la scène
+			function animate(t) {
+				if ( bird ) {
+					//speed représente une variable de caclul dans le sin un peu plus bas
+					var speed;
+					//Si move.action == 1 c'est à dire si l'on souhaite que l'oiseau bouge
+					if ( move.action == 1 ) {
+						//speed = 40000 -> 20000
+						if ( move.speed < 2){
+							speed = 60000 - 20000 * move.speed;
+						}
+						//speed = 20000->5000
+						else if ( move.speed < 3 ) {
+							speed = 50000 - move.speed*15000;	
+						}
+						//speed = 5000->1000
+						else if ( move.speed <= 4 ) {
+							speed = 17000 - move.speed*4000
+						}
+
+						//On bouge l'oiseau en cercle en fonction de speed
+						bird.position.x = Math.sin(t/speed)*700;
+						bird.position.z = Math.cos(t/speed)*700;
+						//On le fait bouger légerement de haut en bas
+						bird.position.y = 600 + Math.cos(t/25000)*100;
+						//On inclus une rotation afin que l'ombre aille toujour tout droit ( en fonction de speed afin que ça reste en accord avec la vitesse de l'oiseau )
+						bird.rotation.y = 3*Math.PI/2 + t/speed ;
+						//On calque la position de la caméra sur celle de l'oiseau
+						camera.position.set( bird.position.x, bird.position.y, bird.position.z  );
+					}
+					//Si move.action == 0 c'est à dire si l'on ne souhaite pas que l'oiseau bouge
+					else {
+						//On bloque la caméra sur l'oiseau pour empécher que l'utilisateur ne se balade pas partout dans la scène
+						camera.position.set( bird.position.x, bird.position.y, bird.position.z  );
+					}
+				}
+				//Si move.look = true alors on bloque le regard la caméra vers le centre de la scène
+				if ( move.look == 1 ) {
+					camera.lookAt(0,50,0);
+
+				}
+				requestAnimationFrame( animate );
+				render();
+				//controls.update();
+			}
+
+			//Fonction de rendu
+			function render() {
+				//On cherche ici à animer le coyotte.
+				//L'animation du coyotte est à la base diviser en 2 phases :
+				//Un phase où il regarde de droite à gauche et une phase où il avance.
+				//Le coyotte ayant une place fixe sur la scène on cherche à limiter son animation à la première phase.
+				//On fonctionne ainsi : A chaque fois que l'on progresse dans l'animation on incrémente fCount,
+				//à un certain stade ( ici 640 ), au lieu de progresser dans l'animation on l'a fait défiler en reculant.
+				//Etant donné que c'est un simple mouvement de tête ce n'est pas génant d'aller en reculant
+
+				for ( var i = 0; i < mixers.length; i ++ ) {
+						//On avance dans l'animation
+						if ( fCount <= 340 ) {
+							mixers[ i ].update( 0.01 );
+							fCount++;
+						}
+						else {
+							//On recule dans l'animation et on revient un peu après le début.
+							//On ne revient pas directement au début car les premières secondes de l'animation il y a un "sautement" au niveau de l'animation d'où le fCount=40 et non fCount=0
+							if ( fCount == 640 ) {
+								fCount = 40;
+								mixers[ i ].update( -0.01 );
+							}
+							//On recule dans l'animation
+							if ( fCount > 340) {
+								mixers[ i ].update( -0.01 );
+								fCount++;
+							}
+						}			
+				}
+				renderer.render( scene, camera );
+			}
+		</script>
+
+	</body>
+</html>
